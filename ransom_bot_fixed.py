@@ -34,7 +34,7 @@ class AddPurchase(StatesGroup):
     frame_number = State()
     phone = State()
     total_amount = State()
-    months = State()
+    weeks = State()  # ← ИЗМЕНЕНО: было months
     first_payment = State()
     first_payment_days = State()
 
@@ -133,12 +133,12 @@ async def add_phone(message: types.Message, state: FSMContext):
 @dp.message(AddPurchase.total_amount)
 async def add_total(message: types.Message, state: FSMContext):
     await state.update_data(total_amount=int(message.text))
-    await message.answer("📅 Введите срок выкупа (в месяцах):")
-    await state.set_state(AddPurchase.months)
+    await message.answer("📅 Введите срок выкупа (в НЕДЕЛЯХ):")  # ← ИЗМЕНЕНО
+    await state.set_state(AddPurchase.weeks)  # ← ИЗМЕНЕНО
 
-@dp.message(AddPurchase.months)
-async def add_months(message: types.Message, state: FSMContext):
-    await state.update_data(months=int(message.text))
+@dp.message(AddPurchase.weeks)  # ← ИЗМЕНЕНО
+async def add_weeks(message: types.Message, state: FSMContext):
+    await state.update_data(weeks=int(message.text))  # ← ИЗМЕНЕНО
     await message.answer("💵 Введите сумму первого взноса:")
     await state.set_state(AddPurchase.first_payment)
 
@@ -161,7 +161,7 @@ async def add_days(message: types.Message, state: FSMContext):
         "frame_number": user_data["frame_number"],
         "phone": user_data["phone"],
         "total_amount": user_data["total_amount"],
-        "months": user_data["months"],
+        "weeks": user_data["weeks"],  # ← ИЗМЕНЕНО: было months
         "first_payment": user_data["first_payment"],
         "first_payment_days": user_data["first_payment_days"],
         "paid": user_data["first_payment"],
@@ -404,7 +404,7 @@ async def unblacklist_days(message: types.Message, state: FSMContext):
             "created_at": datetime.now().isoformat(),
             "first_payment": amount,
             "first_payment_days": days,
-            "months": 0
+            "weeks": 0  # ← ИЗМЕНЕНО: было months
         }
         db["clients"][blacklist_id] = client
         save_data(db)

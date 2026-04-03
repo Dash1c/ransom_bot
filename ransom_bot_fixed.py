@@ -4,13 +4,13 @@ import asyncio
 from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
 TOKEN = "8658698050:AAGL2QE7LS_RfEHM1ZwvLOoQ4Xg_Xxjt_Zk"
-ALLOWED_USERS = [651953211, 1901955703, 1793833215]  # Telegram ID разрешённых лиц
+ALLOWED_USERS = [651953211, 1901955703, 1793833215]
 
 bot = Bot(token=TOKEN)
 storage = MemoryStorage()
@@ -43,10 +43,15 @@ class MakePayment(StatesGroup):
     days = State()
 
 class RemoveFromBlacklist(StatesGroup):
-    days = State()
     amount = State()
+    days = State()
 
-# Main menu keyboard
+# Клавиатура с кнопкой назад
+def back_keyboard():
+    kb = [[KeyboardButton(text="🔙 Назад")]]
+    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
+
+# Главное меню
 def main_keyboard():
     kb = [
         [KeyboardButton(text="➕ Добавить выкуп")],
@@ -57,7 +62,6 @@ def main_keyboard():
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
 def active_clients_keyboard():
-    """Только активные клиенты (дедлайн в будущем)"""
     data = load_data()
     kb = []
     today = datetime.now().date()
@@ -70,7 +74,6 @@ def active_clients_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
 def pending_clients_keyboard():
-    """Только клиенты в ожидании решения (дедлайн сегодня или в прошлом И уведомление отправлено)"""
     data = load_data()
     kb = []
     today = datetime.now().date()
@@ -110,58 +113,120 @@ def blacklist_detail_keyboard(blacklist_id):
     ]
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
-# Функция для сброса состояния
-async def cancel_state_if_needed(message: types.Message, state: FSMContext):
-    """Отменяет текущее состояние, если оно есть"""
-    current_state = await state.get_state()
-    if current_state is not None:
-        await state.clear()
-        await message.answer("🔄 Действие отменено.", reply_markup=main_keyboard())
-
-# УНИВЕРСАЛЬНЫЙ ПЕРЕХВАТЧИК КНОПОК МЕНЮ (должен быть ПЕРЕД всеми обработчиками состояний)
-@dp.message(lambda message: message.text in ["➕ Добавить выкуп", "📋 Список всех выкупов", "⏳ Ожидают решения", "⛔ Чёрный список (ЧС)"])
-async def handle_menu_buttons_during_state(message: types.Message, state: FSMContext):
-    """Перехватывает кнопки меню, даже если бот находится в состоянии"""
-    await cancel_state_if_needed(message, state)
-    
-    # Перенаправляем на нужный обработчик
-    if message.text == "➕ Добавить выкуп":
-        await add_purchase_start(message, state)
-    elif message.text == "📋 Список всех выкупов":
-        await list_active_purchases(message, state)
-    elif message.text == "⏳ Ожидают решения":
-        await list_pending(message, state)
-    elif message.text == "⛔ Чёрный список (ЧС)":
-        await show_blacklist(message, state)
-
-@dp.message(Command("cancel"))
-async def cancel_handler(message: types.Message, state: FSMContext):
-    if message.from_user.id not in ALLOWED_USERS:
-        return
-    await cancel_state_if_needed(message, state)
+# Обработчик кнопки "Назад" - работает везде
+@dp.message(F.text == "🔙 Назад")
+async def go_back(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer("🔙 Возврат в главное меню.", reply_markup=main_keyboard())
 
 @dp.message(Command("start"))
 async def start(message: types.Message, state: FSMContext):
     if message.from_user.id not in ALLOWED_USERS:
         await message.answer("❌ Доступ запрещён.")
         return
-    await cancel_state_if_needed(message, state)
+    await state.clear()
     await message.answer("👋 Привет! Выбери действие:", reply_markup=main_keyboard())
 
 @dp.message(F.text == "➕ Добавить выкуп")
 async def add_purchase_start(message: types.Message, state: FSMContext):
     if message.from_user.id not in ALLOWED_USERS:
         return
-    await message.answer("📝 Введите ФИО клиента:")
+    await state.clear()
+    await message.answer("📝 Введите ФИО клиента:", reply_markup=back_keyboard())
     await state.set_state(AddPurchase.fio)
+
+@dp.message(AddPurchase.fio)
+async def add_fio(message: types.Message, state: FSMContext):
+    await state.update_data(fio=message.text)
+    await message.answer("🔢 Введите номер рамы:", reply_markup=back_keyboard())
+    await state.set_state(AddPurchase.frame_number)
+
+@dp.message(AddPurchase.frame_number)
+async def add_frame(message: types.Message, state: FSMContext):
+    await state.update_data(frame_number=message.text)
+    await message.answer("📞 Введите номер телефона клиента:", reply_markup=back_keyboard())
+    await state.set_state(AddPurchase.phone)
+
+@dp.message(AddPurchase.phone)
+async def add_phone(message: types.Message, state: FSMContext):
+    await state.update_data(phone=message.text)
+    await message.answer("💰 Введите общую сумму выкупа (в рублях):", reply_markup=back_keyboard())
+    await state.set_state(AddPurchase.total_amount)
+
+@dp.message(AddPurchase.total_amount)
+async def add_total(message: types.Message, state: FSMContext):
+    try:
+        await state.update_data(total_amount=int(message.text))
+        await message.answer("📅 Введите срок выкупа (в НЕДЕЛЯХ):", reply_markup=back_keyboard())
+        await state.set_state(AddPurchase.weeks)
+    except ValueError:
+        await message.answer("❌ Введите число! Сколько рублей?", reply_markup=back_keyboard())
+
+@dp.message(AddPurchase.weeks)
+async def add_weeks(message: types.Message, state: FSMContext):
+    try:
+        await state.update_data(weeks=int(message.text))
+        await message.answer("💵 Введите сумму первого взноса:", reply_markup=back_keyboard())
+        await state.set_state(AddPurchase.first_payment)
+    except ValueError:
+        await message.answer("❌ Введите число! Сколько недель?", reply_markup=back_keyboard())
+
+@dp.message(AddPurchase.first_payment)
+async def add_first_payment(message: types.Message, state: FSMContext):
+    try:
+        await state.update_data(first_payment=int(message.text))
+        await message.answer("📆 На сколько дней хватит первого взноса?", reply_markup=back_keyboard())
+        await state.set_state(AddPurchase.first_payment_days)
+    except ValueError:
+        await message.answer("❌ Введите число! Сумма первого взноса?", reply_markup=back_keyboard())
+
+@dp.message(AddPurchase.first_payment_days)
+async def add_days(message: types.Message, state: FSMContext):
+    try:
+        days = int(message.text)
+        user_data = await state.update_data(first_payment_days=days)
+        user_data = await state.get_data()
+        
+        client_id = f"client_{int(datetime.now().timestamp())}"
+        deadline = datetime.now() + timedelta(days=user_data["first_payment_days"])
+        
+        new_client = {
+            "fio": user_data["fio"],
+            "frame_number": user_data["frame_number"],
+            "phone": user_data["phone"],
+            "total_amount": user_data["total_amount"],
+            "weeks": user_data["weeks"],
+            "first_payment": user_data["first_payment"],
+            "first_payment_days": user_data["first_payment_days"],
+            "paid": user_data["first_payment"],
+            "deadline": deadline.isoformat(),
+            "in_blacklist": False,
+            "notified": False,
+            "created_at": datetime.now().isoformat()
+        }
+        
+        db = load_data()
+        db["clients"][client_id] = new_client
+        save_data(db)
+        
+        await message.answer(
+            f"✅ Клиент {user_data['fio']} добавлен!\n"
+            f"📅 Следующая дата оплаты: {deadline.strftime('%Y-%m-%d')}\n\n"
+            f"📍 Клиент находится в активных до наступления дедлайна.",
+            reply_markup=main_keyboard()
+        )
+        await state.clear()
+    except ValueError:
+        await message.answer("❌ Введите число! На сколько дней?", reply_markup=back_keyboard())
 
 @dp.message(F.text == "📋 Список всех выкупов")
 async def list_active_purchases(message: types.Message, state: FSMContext):
     if message.from_user.id not in ALLOWED_USERS:
         return
+    await state.clear()
     kb = active_clients_keyboard()
     if not kb.inline_keyboard:
-        await message.answer("📭 Активных выкупов нет.")
+        await message.answer("📭 Активных выкупов нет.", reply_markup=main_keyboard())
     else:
         await message.answer("📋 Активные выкупы (дедлайн в будущем):", reply_markup=kb)
 
@@ -169,9 +234,10 @@ async def list_active_purchases(message: types.Message, state: FSMContext):
 async def list_pending(message: types.Message, state: FSMContext):
     if message.from_user.id not in ALLOWED_USERS:
         return
+    await state.clear()
     kb = pending_clients_keyboard()
     if not kb.inline_keyboard:
-        await message.answer("✅ Нет клиентов, ожидающих решения.")
+        await message.answer("✅ Нет клиентов, ожидающих решения.", reply_markup=main_keyboard())
     else:
         await message.answer("⏳ Клиенты с истекшим сроком (ждут решения):", reply_markup=kb)
 
@@ -179,77 +245,12 @@ async def list_pending(message: types.Message, state: FSMContext):
 async def show_blacklist(message: types.Message, state: FSMContext):
     if message.from_user.id not in ALLOWED_USERS:
         return
+    await state.clear()
     kb = blacklist_keyboard()
     if not kb.inline_keyboard:
-        await message.answer("📭 ЧС пуст.")
+        await message.answer("📭 ЧС пуст.", reply_markup=main_keyboard())
     else:
         await message.answer("⛔ Клиенты в ЧС:", reply_markup=kb)
-
-@dp.message(AddPurchase.fio)
-async def add_fio(message: types.Message, state: FSMContext):
-    await state.update_data(fio=message.text)
-    await message.answer("🔢 Введите номер рамы:")
-    await state.set_state(AddPurchase.frame_number)
-
-@dp.message(AddPurchase.frame_number)
-async def add_frame(message: types.Message, state: FSMContext):
-    await state.update_data(frame_number=message.text)
-    await message.answer("📞 Введите номер телефона клиента:")
-    await state.set_state(AddPurchase.phone)
-
-@dp.message(AddPurchase.phone)
-async def add_phone(message: types.Message, state: FSMContext):
-    await state.update_data(phone=message.text)
-    await message.answer("💰 Введите общую сумму выкупа (в рублях):")
-    await state.set_state(AddPurchase.total_amount)
-
-@dp.message(AddPurchase.total_amount)
-async def add_total(message: types.Message, state: FSMContext):
-    await state.update_data(total_amount=int(message.text))
-    await message.answer("📅 Введите срок выкупа (в НЕДЕЛЯХ):")
-    await state.set_state(AddPurchase.weeks)
-
-@dp.message(AddPurchase.weeks)
-async def add_weeks(message: types.Message, state: FSMContext):
-    await state.update_data(weeks=int(message.text))
-    await message.answer("💵 Введите сумму первого взноса:")
-    await state.set_state(AddPurchase.first_payment)
-
-@dp.message(AddPurchase.first_payment)
-async def add_first_payment(message: types.Message, state: FSMContext):
-    await state.update_data(first_payment=int(message.text))
-    await message.answer("📆 На сколько дней хватит первого взноса?")
-    await state.set_state(AddPurchase.first_payment_days)
-
-@dp.message(AddPurchase.first_payment_days)
-async def add_days(message: types.Message, state: FSMContext):
-    user_data = await state.update_data(first_payment_days=int(message.text))
-    user_data = await state.get_data()
-    
-    client_id = f"client_{int(datetime.now().timestamp())}"
-    deadline = datetime.now() + timedelta(days=user_data["first_payment_days"])
-    
-    new_client = {
-        "fio": user_data["fio"],
-        "frame_number": user_data["frame_number"],
-        "phone": user_data["phone"],
-        "total_amount": user_data["total_amount"],
-        "weeks": user_data["weeks"],
-        "first_payment": user_data["first_payment"],
-        "first_payment_days": user_data["first_payment_days"],
-        "paid": user_data["first_payment"],
-        "deadline": deadline.isoformat(),
-        "in_blacklist": False,
-        "notified": False,
-        "created_at": datetime.now().isoformat()
-    }
-    
-    db = load_data()
-    db["clients"][client_id] = new_client
-    save_data(db)
-    
-    await message.answer(f"✅ Клиент {user_data['fio']} добавлен!\n📅 Следующая дата оплаты: {deadline.strftime('%Y-%m-%d')}\n\n📍 Клиент находится в активных до наступления дедлайна.", reply_markup=main_keyboard())
-    await state.clear()
 
 @dp.callback_query(F.data.startswith("active_"))
 async def show_active_client(callback: types.CallbackQuery):
@@ -305,16 +306,16 @@ async def show_pending_client(callback: types.CallbackQuery):
 @dp.callback_query(F.data.startswith("pay_active_"))
 async def start_payment_active(callback: types.CallbackQuery, state: FSMContext):
     client_id = callback.data.split("_", 2)[2]
-    await state.update_data(client_id=client_id, source="active")
-    await callback.message.answer("💵 Введите сумму, которую вносит клиент:")
+    await state.update_data(client_id=client_id)
+    await callback.message.answer("💵 Введите сумму, которую вносит клиент:", reply_markup=back_keyboard())
     await state.set_state(MakePayment.amount)
     await callback.answer()
 
 @dp.callback_query(F.data.startswith("pay_pending_"))
 async def start_payment_pending(callback: types.CallbackQuery, state: FSMContext):
     client_id = callback.data.split("_", 2)[2]
-    await state.update_data(client_id=client_id, source="pending")
-    await callback.message.answer("💵 Введите сумму, которую вносит клиент:")
+    await state.update_data(client_id=client_id)
+    await callback.message.answer("💵 Введите сумму, которую вносит клиент:", reply_markup=back_keyboard())
     await state.set_state(MakePayment.amount)
     await callback.answer()
 
@@ -323,10 +324,10 @@ async def process_payment_amount(message: types.Message, state: FSMContext):
     try:
         amount = int(message.text)
         await state.update_data(payment_amount=amount)
-        await message.answer("📆 На сколько дней хватит этого платежа?")
+        await message.answer("📆 На сколько дней хватит этого платежа?", reply_markup=back_keyboard())
         await state.set_state(MakePayment.days)
     except ValueError:
-        await message.answer("❌ Введите число!")
+        await message.answer("❌ Введите число!", reply_markup=back_keyboard())
 
 @dp.message(MakePayment.days)
 async def process_payment_days(message: types.Message, state: FSMContext):
@@ -339,7 +340,7 @@ async def process_payment_days(message: types.Message, state: FSMContext):
         db = load_data()
         client = db["clients"].get(client_id)
         if not client:
-            await message.answer("❌ Клиент не найден")
+            await message.answer("❌ Клиент не найден", reply_markup=main_keyboard())
             await state.clear()
             return
         
@@ -369,7 +370,7 @@ async def process_payment_days(message: types.Message, state: FSMContext):
         )
         await state.clear()
     except ValueError:
-        await message.answer("❌ Введите число дней!")
+        await message.answer("❌ Введите число дней!", reply_markup=back_keyboard())
 
 @dp.callback_query(F.data.startswith("to_blacklist_"))
 async def add_to_blacklist(callback: types.CallbackQuery):
@@ -396,16 +397,6 @@ async def add_to_blacklist(callback: types.CallbackQuery):
     await callback.message.edit_text(f"🚫 {bl_entry['fio']} добавлен в ЧС и удалён из активных выкупов.")
     await callback.answer()
 
-@dp.message(F.text == "⛔ Чёрный список (ЧС)")
-async def show_blacklist(message: types.Message, state: FSMContext):
-    if message.from_user.id not in ALLOWED_USERS:
-        return
-    kb = blacklist_keyboard()
-    if not kb.inline_keyboard:
-        await message.answer("📭 ЧС пуст.")
-    else:
-        await message.answer("⛔ Клиенты в ЧС:", reply_markup=kb)
-
 @dp.callback_query(F.data.startswith("bl_"))
 async def show_blacklist_entry(callback: types.CallbackQuery):
     blacklist_id = callback.data.split("_", 1)[1]
@@ -430,7 +421,7 @@ async def show_blacklist_entry(callback: types.CallbackQuery):
 async def unblacklist(callback: types.CallbackQuery, state: FSMContext):
     blacklist_id = callback.data.split("_", 1)[1]
     await state.update_data(blacklist_id=blacklist_id)
-    await callback.message.answer("💰 Введите сумму, которую клиент внёс для возврата из ЧС:")
+    await callback.message.answer("💰 Введите сумму, которую клиент внёс для возврата из ЧС:", reply_markup=back_keyboard())
     await state.set_state(RemoveFromBlacklist.amount)
     await callback.answer()
 
@@ -439,10 +430,10 @@ async def unblacklist_amount(message: types.Message, state: FSMContext):
     try:
         amount = int(message.text)
         await state.update_data(amount=amount)
-        await message.answer("📆 На сколько дней хватит этого платежа?")
+        await message.answer("📆 На сколько дней хватит этого платежа?", reply_markup=back_keyboard())
         await state.set_state(RemoveFromBlacklist.days)
     except ValueError:
-        await message.answer("❌ Введите число!")
+        await message.answer("❌ Введите число!", reply_markup=back_keyboard())
 
 @dp.message(RemoveFromBlacklist.days)
 async def unblacklist_days(message: types.Message, state: FSMContext):
@@ -456,7 +447,7 @@ async def unblacklist_days(message: types.Message, state: FSMContext):
         bl_entry = db["blacklist"].pop(blacklist_id, None)
         
         if not bl_entry:
-            await message.answer("❌ Запись не найдена")
+            await message.answer("❌ Запись не найдена", reply_markup=main_keyboard())
             await state.clear()
             return
         
@@ -489,7 +480,7 @@ async def unblacklist_days(message: types.Message, state: FSMContext):
         )
         await state.clear()
     except ValueError:
-        await message.answer("❌ Введите число дней!")
+        await message.answer("❌ Введите число дней!", reply_markup=back_keyboard())
 
 @dp.callback_query(F.data.startswith("del_black_"))
 async def delete_blacklist_entry(callback: types.CallbackQuery):

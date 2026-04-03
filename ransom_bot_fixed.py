@@ -65,7 +65,7 @@ def active_clients_keyboard():
         if client.get("in_blacklist"):
             continue
         deadline_date = datetime.fromisoformat(client["deadline"]).date()
-        if deadline_date > today:  # Только будущие дедлайны
+        if deadline_date > today:
             kb.append([InlineKeyboardButton(text=client["fio"], callback_data=f"active_{cid}")])
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
@@ -79,7 +79,6 @@ def pending_clients_keyboard():
             continue
         deadline_date = datetime.fromisoformat(client["deadline"]).date()
         notified = client.get("notified", False)
-        # В ожидании решения: дедлайн прошел И уведомление отправлено
         if deadline_date <= today and notified:
             kb.append([InlineKeyboardButton(text=client["fio"], callback_data=f"pending_{cid}")])
     return InlineKeyboardMarkup(inline_keyboard=kb)
@@ -93,13 +92,11 @@ def blacklist_keyboard():
 
 def client_detail_keyboard(client_id, is_pending=False):
     if is_pending:
-        # Для клиентов из "Ожидают решения" - только оплата и ЧС
         kb = [
             [InlineKeyboardButton(text="💰 Внести оплату", callback_data=f"pay_pending_{client_id}")],
             [InlineKeyboardButton(text="🚫 В ЧС", callback_data=f"to_blacklist_{client_id}")]
         ]
     else:
-        # Для активных клиентов
         kb = [
             [InlineKeyboardButton(text="💰 Внести оплату", callback_data=f"pay_active_{client_id}")],
             [InlineKeyboardButton(text="🚫 В ЧС", callback_data=f"to_blacklist_{client_id}")]
@@ -113,19 +110,68 @@ def blacklist_detail_keyboard(blacklist_id):
     ]
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
+# Функция для сброса состояния
+async def cancel_state_if_needed(message: types.Message, state: FSMContext):
+    """Отменяет текущее состояние, если оно есть"""
+    current_state = await state.get_state()
+    if current_state is not None:
+        await state.clear()
+        await message.answer("🔄 Действие отменено. Возвращаюсь в главное меню.", reply_markup=main_keyboard())
+
+@dp.message(Command("cancel"))
+async def cancel_handler(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ALLOWED_USERS:
+        return
+    await cancel_state_if_needed(message, state)
+
 @dp.message(Command("start"))
-async def start(message: types.Message):
+async def start(message: types.Message, state: FSMContext):
     if message.from_user.id not in ALLOWED_USERS:
         await message.answer("❌ Доступ запрещён.")
         return
+    await cancel_state_if_needed(message, state)
     await message.answer("👋 Привет! Выбери действие:", reply_markup=main_keyboard())
 
 @dp.message(F.text == "➕ Добавить выкуп")
 async def add_purchase_start(message: types.Message, state: FSMContext):
     if message.from_user.id not in ALLOWED_USERS:
         return
+    await cancel_state_if_needed(message, state)
     await message.answer("📝 Введите ФИО клиента:")
     await state.set_state(AddPurchase.fio)
+
+@dp.message(F.text == "📋 Список всех выкупов")
+async def list_active_purchases(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ALLOWED_USERS:
+        return
+    await cancel_state_if_needed(message, state)
+    kb = active_clients_keyboard()
+    if not kb.inline_keyboard:
+        await message.answer("📭 Активных выкупов нет.")
+    else:
+        await message.answer("📋 Активные выкупы (дедлайн в будущем):", reply_markup=kb)
+
+@dp.message(F.text == "⏳ Ожидают решения")
+async def list_pending(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ALLOWED_USERS:
+        return
+    await cancel_state_if_needed(message, state)
+    kb = pending_clients_keyboard()
+    if not kb.inline_keyboard:
+        await message.answer("✅ Нет клиентов, ожидающих решения.")
+    else:
+        await message.answer("⏳ Клиенты с истекшим сроком (ждут решения):", reply_markup=kb)
+
+@dp.message(F.text == "⛔ Чёрный список (ЧС)")
+async def show_blacklist(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ALLOWED_USERS:
+        return
+    await cancel_state_if_needed(message, state)
+    kb = blacklist_keyboard()
+    if not kb.inline_keyboard:
+        await message.answer("📭 ЧС пуст.")
+    else:
+        await message.answer("⛔ Клиенты в ЧС:", reply_markup=kb)
 
 @dp.message(AddPurchase.fio)
 async def add_fio(message: types.Message, state: FSMContext):
@@ -182,7 +228,7 @@ async def add_days(message: types.Message, state: FSMContext):
         "paid": user_data["first_payment"],
         "deadline": deadline.isoformat(),
         "in_blacklist": False,
-        "notified": False,  # Уведомление ещё не отправлено
+        "notified": False,
         "created_at": datetime.now().isoformat()
     }
     
@@ -192,26 +238,6 @@ async def add_days(message: types.Message, state: FSMContext):
     
     await message.answer(f"✅ Клиент {user_data['fio']} добавлен!\n📅 Следующая дата оплаты: {deadline.strftime('%Y-%m-%d')}\n\n📍 Клиент находится в активных до наступления дедлайна.", reply_markup=main_keyboard())
     await state.clear()
-
-@dp.message(F.text == "📋 Список всех выкупов")
-async def list_active_purchases(message: types.Message):
-    if message.from_user.id not in ALLOWED_USERS:
-        return
-    kb = active_clients_keyboard()
-    if not kb.inline_keyboard:
-        await message.answer("📭 Активных выкупов нет.")
-    else:
-        await message.answer("📋 Активные выкупы (дедлайн в будущем):", reply_markup=kb)
-
-@dp.message(F.text == "⏳ Ожидают решения")
-async def list_pending(message: types.Message):
-    if message.from_user.id not in ALLOWED_USERS:
-        return
-    kb = pending_clients_keyboard()
-    if not kb.inline_keyboard:
-        await message.answer("✅ Нет клиентов, ожидающих решения.")
-    else:
-        await message.answer("⏳ Клиенты с истекшим сроком (ждут решения):", reply_markup=kb)
 
 @dp.callback_query(F.data.startswith("active_"))
 async def show_active_client(callback: types.CallbackQuery):
@@ -305,13 +331,11 @@ async def process_payment_days(message: types.Message, state: FSMContext):
             await state.clear()
             return
         
-        # Обновляем данные клиента
         client["paid"] += payment_amount
         new_deadline = datetime.now() + timedelta(days=days)
         client["deadline"] = new_deadline.isoformat()
-        client["notified"] = False  # Сбрасываем флаг, т.к. теперь активный
+        client["notified"] = False
         
-        # Если сумма оплаты превысила или сравнялась с общей суммой - выкуп завершён
         if client["paid"] >= client["total_amount"]:
             fio = client["fio"]
             total_amount = client["total_amount"]
@@ -345,7 +369,6 @@ async def add_to_blacklist(callback: types.CallbackQuery):
         await callback.answer("❌ Клиент не найден")
         return
     
-    # Перемещаем в ЧС
     bl_entry = {
         "fio": client["fio"],
         "phone": client["phone"],
@@ -355,21 +378,11 @@ async def add_to_blacklist(callback: types.CallbackQuery):
         "removed_at": datetime.now().isoformat()
     }
     db["blacklist"][client_id] = bl_entry
-    del db["clients"][client_id]  # Удаляем из активных
+    del db["clients"][client_id]
     save_data(db)
     
     await callback.message.edit_text(f"🚫 {bl_entry['fio']} добавлен в ЧС и удалён из активных выкупов.")
     await callback.answer()
-
-@dp.message(F.text == "⛔ Чёрный список (ЧС)")
-async def show_blacklist(message: types.Message):
-    if message.from_user.id not in ALLOWED_USERS:
-        return
-    kb = blacklist_keyboard()
-    if not kb.inline_keyboard:
-        await message.answer("📭 ЧС пуст.")
-    else:
-        await message.answer("⛔ Клиенты в ЧС:", reply_markup=kb)
 
 @dp.callback_query(F.data.startswith("bl_"))
 async def show_blacklist_entry(callback: types.CallbackQuery):
@@ -425,7 +438,6 @@ async def unblacklist_days(message: types.Message, state: FSMContext):
             await state.clear()
             return
         
-        # Восстанавливаем клиента в активные (не в ожидающие!)
         deadline = datetime.now() + timedelta(days=days)
         client = {
             "fio": bl_entry["fio"],
@@ -435,7 +447,7 @@ async def unblacklist_days(message: types.Message, state: FSMContext):
             "paid": amount,
             "deadline": deadline.isoformat(),
             "in_blacklist": False,
-            "notified": False,  # Уведомление не отправлялось, т.к. новый дедлайн
+            "notified": False,
             "created_at": datetime.now().isoformat(),
             "first_payment": amount,
             "first_payment_days": days,
@@ -475,7 +487,6 @@ async def delete_blacklist_entry(callback: types.CallbackQuery):
 async def check_deadlines():
     while True:
         now = datetime.now()
-        # Следующий запуск в 20:00 МСК
         next_run = now.replace(hour=20, minute=0, second=0, microsecond=0)
         if now >= next_run:
             next_run += timedelta(days=1)
@@ -494,7 +505,6 @@ async def check_deadlines():
                 deadline_date = datetime.fromisoformat(client["deadline"]).date()
                 notified = client.get("notified", False)
                 
-                # Если дедлайн сегодня И уведомление ещё не отправляли
                 if deadline_date == today and not notified:
                     paid = client["paid"]
                     total = client["total_amount"]
@@ -513,8 +523,6 @@ async def check_deadlines():
                     ])
                     await bot.send_message(user_id, text, reply_markup=kb)
                     
-                    # Помечаем, что уведомление отправлено
-                    # Клиент остаётся в clients, но теперь будет отображаться в "Ожидают решения"
                     client["notified"] = True
                     save_data(db)
 

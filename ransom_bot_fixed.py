@@ -4,7 +4,7 @@ import asyncio
 from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -46,12 +46,9 @@ class RemoveFromBlacklist(StatesGroup):
     amount = State()
     days = State()
 
-# Клавиатура с кнопкой назад
-def back_keyboard():
-    kb = [[KeyboardButton(text="🔙 Назад")]]
-    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
+# Список кнопок меню
+MENU_BUTTONS = ["➕ Добавить выкуп", "📋 Список всех выкупов", "⏳ Ожидают решения", "⛔ Чёрный список (ЧС)"]
 
-# Главное меню
 def main_keyboard():
     kb = [
         [KeyboardButton(text="➕ Добавить выкуп")],
@@ -59,6 +56,10 @@ def main_keyboard():
         [KeyboardButton(text="⏳ Ожидают решения")],
         [KeyboardButton(text="⛔ Чёрный список (ЧС)")]
     ]
+    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
+
+def back_keyboard():
+    kb = [[KeyboardButton(text="🔙 Назад")]]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
 def active_clients_keyboard():
@@ -113,11 +114,9 @@ def blacklist_detail_keyboard(blacklist_id):
     ]
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
-# Обработчик кнопки "Назад" - работает везде
-@dp.message(F.text == "🔙 Назад")
-async def go_back(message: types.Message, state: FSMContext):
-    await state.clear()
-    await message.answer("🔙 Возврат в главное меню.", reply_markup=main_keyboard())
+# Проверка на кнопки меню (для всех обработчиков)
+def is_menu_button(text):
+    return text in MENU_BUTTONS
 
 @dp.message(Command("start"))
 async def start(message: types.Message, state: FSMContext):
@@ -126,6 +125,11 @@ async def start(message: types.Message, state: FSMContext):
         return
     await state.clear()
     await message.answer("👋 Привет! Выбери действие:", reply_markup=main_keyboard())
+
+@dp.message(F.text == "🔙 Назад")
+async def go_back(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer("🔙 Возврат в главное меню.", reply_markup=main_keyboard())
 
 @dp.message(F.text == "➕ Добавить выкуп")
 async def add_purchase_start(message: types.Message, state: FSMContext):
@@ -137,33 +141,53 @@ async def add_purchase_start(message: types.Message, state: FSMContext):
 
 @dp.message(AddPurchase.fio)
 async def add_fio(message: types.Message, state: FSMContext):
+    if is_menu_button(message.text):
+        await state.clear()
+        await message.answer("🔄 Действие отменено.", reply_markup=main_keyboard())
+        return
     await state.update_data(fio=message.text)
     await message.answer("🔢 Введите номер рамы:", reply_markup=back_keyboard())
     await state.set_state(AddPurchase.frame_number)
 
 @dp.message(AddPurchase.frame_number)
 async def add_frame(message: types.Message, state: FSMContext):
+    if is_menu_button(message.text):
+        await state.clear()
+        await message.answer("🔄 Действие отменено.", reply_markup=main_keyboard())
+        return
     await state.update_data(frame_number=message.text)
     await message.answer("📞 Введите номер телефона клиента:", reply_markup=back_keyboard())
     await state.set_state(AddPurchase.phone)
 
 @dp.message(AddPurchase.phone)
 async def add_phone(message: types.Message, state: FSMContext):
+    if is_menu_button(message.text):
+        await state.clear()
+        await message.answer("🔄 Действие отменено.", reply_markup=main_keyboard())
+        return
     await state.update_data(phone=message.text)
     await message.answer("💰 Введите общую сумму выкупа (в рублях):", reply_markup=back_keyboard())
     await state.set_state(AddPurchase.total_amount)
 
 @dp.message(AddPurchase.total_amount)
 async def add_total(message: types.Message, state: FSMContext):
+    if is_menu_button(message.text):
+        await state.clear()
+        await message.answer("🔄 Действие отменено.", reply_markup=main_keyboard())
+        return
     try:
         await state.update_data(total_amount=int(message.text))
-        await message.answer("📅 Введите срок выкупа (в НЕДЕЛЯХ):", reply_markup=back_keyboard())
+        await message.answer("📅 Введите срок выкупа (в неделях):", reply_markup=back_keyboard())
         await state.set_state(AddPurchase.weeks)
     except ValueError:
         await message.answer("❌ Введите число! Сколько рублей?", reply_markup=back_keyboard())
 
 @dp.message(AddPurchase.weeks)
 async def add_weeks(message: types.Message, state: FSMContext):
+    if is_menu_button(message.text):
+        await state.clear()
+        await message.answer("🔄 Действие отменено.", reply_markup=main_keyboard())
+        return
     try:
         await state.update_data(weeks=int(message.text))
         await message.answer("💵 Введите сумму первого взноса:", reply_markup=back_keyboard())
@@ -173,6 +197,10 @@ async def add_weeks(message: types.Message, state: FSMContext):
 
 @dp.message(AddPurchase.first_payment)
 async def add_first_payment(message: types.Message, state: FSMContext):
+    if is_menu_button(message.text):
+        await state.clear()
+        await message.answer("🔄 Действие отменено.", reply_markup=main_keyboard())
+        return
     try:
         await state.update_data(first_payment=int(message.text))
         await message.answer("📆 На сколько дней хватит первого взноса?", reply_markup=back_keyboard())
@@ -182,6 +210,10 @@ async def add_first_payment(message: types.Message, state: FSMContext):
 
 @dp.message(AddPurchase.first_payment_days)
 async def add_days(message: types.Message, state: FSMContext):
+    if is_menu_button(message.text):
+        await state.clear()
+        await message.answer("🔄 Действие отменено.", reply_markup=main_keyboard())
+        return
     try:
         days = int(message.text)
         user_data = await state.update_data(first_payment_days=days)
@@ -321,6 +353,10 @@ async def start_payment_pending(callback: types.CallbackQuery, state: FSMContext
 
 @dp.message(MakePayment.amount)
 async def process_payment_amount(message: types.Message, state: FSMContext):
+    if is_menu_button(message.text) or message.text == "🔙 Назад":
+        await state.clear()
+        await message.answer("🔄 Оплата отменена.", reply_markup=main_keyboard())
+        return
     try:
         amount = int(message.text)
         await state.update_data(payment_amount=amount)
@@ -331,6 +367,10 @@ async def process_payment_amount(message: types.Message, state: FSMContext):
 
 @dp.message(MakePayment.days)
 async def process_payment_days(message: types.Message, state: FSMContext):
+    if is_menu_button(message.text) or message.text == "🔙 Назад":
+        await state.clear()
+        await message.answer("🔄 Оплата отменена.", reply_markup=main_keyboard())
+        return
     try:
         days = int(message.text)
         data = await state.get_data()
@@ -427,6 +467,10 @@ async def unblacklist(callback: types.CallbackQuery, state: FSMContext):
 
 @dp.message(RemoveFromBlacklist.amount)
 async def unblacklist_amount(message: types.Message, state: FSMContext):
+    if is_menu_button(message.text) or message.text == "🔙 Назад":
+        await state.clear()
+        await message.answer("🔄 Операция отменена.", reply_markup=main_keyboard())
+        return
     try:
         amount = int(message.text)
         await state.update_data(amount=amount)
@@ -437,6 +481,10 @@ async def unblacklist_amount(message: types.Message, state: FSMContext):
 
 @dp.message(RemoveFromBlacklist.days)
 async def unblacklist_days(message: types.Message, state: FSMContext):
+    if is_menu_button(message.text) or message.text == "🔙 Назад":
+        await state.clear()
+        await message.answer("🔄 Операция отменена.", reply_markup=main_keyboard())
+        return
     try:
         days = int(message.text)
         data = await state.get_data()
@@ -496,7 +544,6 @@ async def delete_blacklist_entry(callback: types.CallbackQuery):
         await callback.answer("❌ Запись не найдена")
     await callback.answer()
 
-# Ежедневная проверка дедлайнов в 20:00 МСК
 async def check_deadlines():
     while True:
         now = datetime.now()

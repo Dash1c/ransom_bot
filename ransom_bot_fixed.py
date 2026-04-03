@@ -46,9 +46,7 @@ class RemoveFromBlacklist(StatesGroup):
     amount = State()
     days = State()
 
-# Список кнопок меню
-MENU_BUTTONS = ["➕ Добавить выкуп", "📋 Список всех выкупов", "⏳ Ожидают решения", "⛔ Чёрный список (ЧС)"]
-
+# Главное меню
 def main_keyboard():
     kb = [
         [KeyboardButton(text="➕ Добавить выкуп")],
@@ -58,6 +56,7 @@ def main_keyboard():
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
+# Клавиатура только с кнопкой "Назад"
 def back_keyboard():
     kb = [[KeyboardButton(text="🔙 Назад")]]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
@@ -114,16 +113,11 @@ def blacklist_detail_keyboard(blacklist_id):
     ]
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
-# Проверка на кнопки меню (для всех обработчиков)
-def is_menu_button(text):
-    return text in MENU_BUTTONS
-
 @dp.message(Command("start"))
-async def start(message: types.Message, state: FSMContext):
+async def start(message: types.Message):
     if message.from_user.id not in ALLOWED_USERS:
         await message.answer("❌ Доступ запрещён.")
         return
-    await state.clear()
     await message.answer("👋 Привет! Выбери действие:", reply_markup=main_keyboard())
 
 @dp.message(F.text == "🔙 Назад")
@@ -141,53 +135,33 @@ async def add_purchase_start(message: types.Message, state: FSMContext):
 
 @dp.message(AddPurchase.fio)
 async def add_fio(message: types.Message, state: FSMContext):
-    if is_menu_button(message.text):
-        await state.clear()
-        await message.answer("🔄 Действие отменено.", reply_markup=main_keyboard())
-        return
     await state.update_data(fio=message.text)
     await message.answer("🔢 Введите номер рамы:", reply_markup=back_keyboard())
     await state.set_state(AddPurchase.frame_number)
 
 @dp.message(AddPurchase.frame_number)
 async def add_frame(message: types.Message, state: FSMContext):
-    if is_menu_button(message.text):
-        await state.clear()
-        await message.answer("🔄 Действие отменено.", reply_markup=main_keyboard())
-        return
     await state.update_data(frame_number=message.text)
     await message.answer("📞 Введите номер телефона клиента:", reply_markup=back_keyboard())
     await state.set_state(AddPurchase.phone)
 
 @dp.message(AddPurchase.phone)
 async def add_phone(message: types.Message, state: FSMContext):
-    if is_menu_button(message.text):
-        await state.clear()
-        await message.answer("🔄 Действие отменено.", reply_markup=main_keyboard())
-        return
     await state.update_data(phone=message.text)
     await message.answer("💰 Введите общую сумму выкупа (в рублях):", reply_markup=back_keyboard())
     await state.set_state(AddPurchase.total_amount)
 
 @dp.message(AddPurchase.total_amount)
 async def add_total(message: types.Message, state: FSMContext):
-    if is_menu_button(message.text):
-        await state.clear()
-        await message.answer("🔄 Действие отменено.", reply_markup=main_keyboard())
-        return
     try:
         await state.update_data(total_amount=int(message.text))
-        await message.answer("📅 Введите срок выкупа (в неделях):", reply_markup=back_keyboard())
+        await message.answer("📅 Введите срок выкупа (в НЕДЕЛЯХ):", reply_markup=back_keyboard())
         await state.set_state(AddPurchase.weeks)
     except ValueError:
         await message.answer("❌ Введите число! Сколько рублей?", reply_markup=back_keyboard())
 
 @dp.message(AddPurchase.weeks)
 async def add_weeks(message: types.Message, state: FSMContext):
-    if is_menu_button(message.text):
-        await state.clear()
-        await message.answer("🔄 Действие отменено.", reply_markup=main_keyboard())
-        return
     try:
         await state.update_data(weeks=int(message.text))
         await message.answer("💵 Введите сумму первого взноса:", reply_markup=back_keyboard())
@@ -197,10 +171,6 @@ async def add_weeks(message: types.Message, state: FSMContext):
 
 @dp.message(AddPurchase.first_payment)
 async def add_first_payment(message: types.Message, state: FSMContext):
-    if is_menu_button(message.text):
-        await state.clear()
-        await message.answer("🔄 Действие отменено.", reply_markup=main_keyboard())
-        return
     try:
         await state.update_data(first_payment=int(message.text))
         await message.answer("📆 На сколько дней хватит первого взноса?", reply_markup=back_keyboard())
@@ -210,10 +180,6 @@ async def add_first_payment(message: types.Message, state: FSMContext):
 
 @dp.message(AddPurchase.first_payment_days)
 async def add_days(message: types.Message, state: FSMContext):
-    if is_menu_button(message.text):
-        await state.clear()
-        await message.answer("🔄 Действие отменено.", reply_markup=main_keyboard())
-        return
     try:
         days = int(message.text)
         user_data = await state.update_data(first_payment_days=days)
@@ -242,9 +208,7 @@ async def add_days(message: types.Message, state: FSMContext):
         save_data(db)
         
         await message.answer(
-            f"✅ Клиент {user_data['fio']} добавлен!\n"
-            f"📅 Следующая дата оплаты: {deadline.strftime('%Y-%m-%d')}\n\n"
-            f"📍 Клиент находится в активных до наступления дедлайна.",
+            f"✅ Клиент {user_data['fio']} добавлен!\n📅 Следующая дата оплаты: {deadline.strftime('%Y-%m-%d')}",
             reply_markup=main_keyboard()
         )
         await state.clear()
@@ -252,32 +216,29 @@ async def add_days(message: types.Message, state: FSMContext):
         await message.answer("❌ Введите число! На сколько дней?", reply_markup=back_keyboard())
 
 @dp.message(F.text == "📋 Список всех выкупов")
-async def list_active_purchases(message: types.Message, state: FSMContext):
+async def list_active_purchases(message: types.Message):
     if message.from_user.id not in ALLOWED_USERS:
         return
-    await state.clear()
     kb = active_clients_keyboard()
     if not kb.inline_keyboard:
         await message.answer("📭 Активных выкупов нет.", reply_markup=main_keyboard())
     else:
-        await message.answer("📋 Активные выкупы (дедлайн в будущем):", reply_markup=kb)
+        await message.answer("📋 Активные выкупы:", reply_markup=kb)
 
 @dp.message(F.text == "⏳ Ожидают решения")
-async def list_pending(message: types.Message, state: FSMContext):
+async def list_pending(message: types.Message):
     if message.from_user.id not in ALLOWED_USERS:
         return
-    await state.clear()
     kb = pending_clients_keyboard()
     if not kb.inline_keyboard:
         await message.answer("✅ Нет клиентов, ожидающих решения.", reply_markup=main_keyboard())
     else:
-        await message.answer("⏳ Клиенты с истекшим сроком (ждут решения):", reply_markup=kb)
+        await message.answer("⏳ Клиенты с истекшим сроком:", reply_markup=kb)
 
 @dp.message(F.text == "⛔ Чёрный список (ЧС)")
-async def show_blacklist(message: types.Message, state: FSMContext):
+async def show_blacklist(message: types.Message):
     if message.from_user.id not in ALLOWED_USERS:
         return
-    await state.clear()
     kb = blacklist_keyboard()
     if not kb.inline_keyboard:
         await message.answer("📭 ЧС пуст.", reply_markup=main_keyboard())
@@ -303,8 +264,7 @@ async def show_active_client(callback: types.CallbackQuery):
         f"📞 Телефон: {client['phone']}\n"
         f"💰 Выкуп: {paid}/{total} руб.\n"
         f"📉 Осталось: {remaining} руб.\n"
-        f"📅 Дедлайн: {deadline_date}\n"
-        f"📍 Статус: Активный"
+        f"📅 Дедлайн: {deadline_date}"
     )
     await callback.message.edit_text(text, reply_markup=client_detail_keyboard(client_id, is_pending=False))
     await callback.answer()
@@ -323,14 +283,13 @@ async def show_pending_client(callback: types.CallbackQuery):
     remaining = total - paid
     deadline_date = datetime.fromisoformat(client["deadline"]).date()
     text = (
-        f"⚠️ ПРОСРОЧКА! Ожидает решения.\n\n"
+        f"⚠️ ПРОСРОЧКА!\n\n"
         f"👤 ФИО: {client['fio']}\n"
         f"🔢 Рама: {client['frame_number']}\n"
         f"📞 Телефон: {client['phone']}\n"
         f"💰 Оплачено: {paid}/{total} руб.\n"
         f"📉 Осталось: {remaining} руб.\n"
-        f"📅 Дедлайн истёк: {deadline_date}\n"
-        f"📍 Статус: Ожидает решения"
+        f"📅 Дедлайн истёк: {deadline_date}"
     )
     await callback.message.edit_text(text, reply_markup=client_detail_keyboard(client_id, is_pending=True))
     await callback.answer()
@@ -339,7 +298,7 @@ async def show_pending_client(callback: types.CallbackQuery):
 async def start_payment_active(callback: types.CallbackQuery, state: FSMContext):
     client_id = callback.data.split("_", 2)[2]
     await state.update_data(client_id=client_id)
-    await callback.message.answer("💵 Введите сумму, которую вносит клиент:", reply_markup=back_keyboard())
+    await callback.message.answer("💵 Введите сумму:", reply_markup=back_keyboard())
     await state.set_state(MakePayment.amount)
     await callback.answer()
 
@@ -347,30 +306,22 @@ async def start_payment_active(callback: types.CallbackQuery, state: FSMContext)
 async def start_payment_pending(callback: types.CallbackQuery, state: FSMContext):
     client_id = callback.data.split("_", 2)[2]
     await state.update_data(client_id=client_id)
-    await callback.message.answer("💵 Введите сумму, которую вносит клиент:", reply_markup=back_keyboard())
+    await callback.message.answer("💵 Введите сумму:", reply_markup=back_keyboard())
     await state.set_state(MakePayment.amount)
     await callback.answer()
 
 @dp.message(MakePayment.amount)
 async def process_payment_amount(message: types.Message, state: FSMContext):
-    if is_menu_button(message.text) or message.text == "🔙 Назад":
-        await state.clear()
-        await message.answer("🔄 Оплата отменена.", reply_markup=main_keyboard())
-        return
     try:
         amount = int(message.text)
         await state.update_data(payment_amount=amount)
-        await message.answer("📆 На сколько дней хватит этого платежа?", reply_markup=back_keyboard())
+        await message.answer("📆 На сколько дней хватит?", reply_markup=back_keyboard())
         await state.set_state(MakePayment.days)
     except ValueError:
         await message.answer("❌ Введите число!", reply_markup=back_keyboard())
 
 @dp.message(MakePayment.days)
 async def process_payment_days(message: types.Message, state: FSMContext):
-    if is_menu_button(message.text) or message.text == "🔙 Назад":
-        await state.clear()
-        await message.answer("🔄 Оплата отменена.", reply_markup=main_keyboard())
-        return
     try:
         days = int(message.text)
         data = await state.get_data()
@@ -402,10 +353,7 @@ async def process_payment_days(message: types.Message, state: FSMContext):
         
         remaining = client["total_amount"] - client["paid"]
         await message.answer(
-            f"✅ Принято {payment_amount} руб.\n"
-            f"💰 Осталось выплатить: {remaining} руб.\n"
-            f"📅 Новый дедлайн: {new_deadline.strftime('%Y-%m-%d')}\n\n"
-            f"📍 Клиент возвращён в активные выкупы.",
+            f"✅ Принято {payment_amount} руб.\n💰 Осталось: {remaining} руб.\n📅 Новый дедлайн: {new_deadline.strftime('%Y-%m-%d')}",
             reply_markup=main_keyboard()
         )
         await state.clear()
@@ -434,7 +382,7 @@ async def add_to_blacklist(callback: types.CallbackQuery):
     del db["clients"][client_id]
     save_data(db)
     
-    await callback.message.edit_text(f"🚫 {bl_entry['fio']} добавлен в ЧС и удалён из активных выкупов.")
+    await callback.message.edit_text(f"🚫 {bl_entry['fio']} добавлен в ЧС.")
     await callback.answer()
 
 @dp.callback_query(F.data.startswith("bl_"))
@@ -461,30 +409,22 @@ async def show_blacklist_entry(callback: types.CallbackQuery):
 async def unblacklist(callback: types.CallbackQuery, state: FSMContext):
     blacklist_id = callback.data.split("_", 1)[1]
     await state.update_data(blacklist_id=blacklist_id)
-    await callback.message.answer("💰 Введите сумму, которую клиент внёс для возврата из ЧС:", reply_markup=back_keyboard())
+    await callback.message.answer("💰 Введите сумму для возврата из ЧС:", reply_markup=back_keyboard())
     await state.set_state(RemoveFromBlacklist.amount)
     await callback.answer()
 
 @dp.message(RemoveFromBlacklist.amount)
 async def unblacklist_amount(message: types.Message, state: FSMContext):
-    if is_menu_button(message.text) or message.text == "🔙 Назад":
-        await state.clear()
-        await message.answer("🔄 Операция отменена.", reply_markup=main_keyboard())
-        return
     try:
         amount = int(message.text)
         await state.update_data(amount=amount)
-        await message.answer("📆 На сколько дней хватит этого платежа?", reply_markup=back_keyboard())
+        await message.answer("📆 На сколько дней хватит?", reply_markup=back_keyboard())
         await state.set_state(RemoveFromBlacklist.days)
     except ValueError:
         await message.answer("❌ Введите число!", reply_markup=back_keyboard())
 
 @dp.message(RemoveFromBlacklist.days)
 async def unblacklist_days(message: types.Message, state: FSMContext):
-    if is_menu_button(message.text) or message.text == "🔙 Назад":
-        await state.clear()
-        await message.answer("🔄 Операция отменена.", reply_markup=main_keyboard())
-        return
     try:
         days = int(message.text)
         data = await state.get_data()
@@ -519,11 +459,7 @@ async def unblacklist_days(message: types.Message, state: FSMContext):
         
         remaining = bl_entry["total_amount"] - amount
         await message.answer(
-            f"✅ {bl_entry['fio']} возвращён из ЧС!\n"
-            f"💰 Внесено: {amount} руб.\n"
-            f"📉 Осталось выплатить: {remaining} руб.\n"
-            f"📅 Новый дедлайн: {deadline.strftime('%Y-%m-%d')}\n\n"
-            f"📍 Клиент добавлен в активные выкупы.",
+            f"✅ {bl_entry['fio']} возвращён из ЧС!\n💰 Внесено: {amount} руб.\n📉 Осталось: {remaining} руб.\n📅 Новый дедлайн: {deadline.strftime('%Y-%m-%d')}",
             reply_markup=main_keyboard()
         )
         await state.clear()
@@ -574,8 +510,7 @@ async def check_deadlines():
                         f"👤 Клиент: {client['fio']}\n"
                         f"📞 Телефон: {client['phone']}\n"
                         f"💰 Долг: {remaining} руб. (всего {total} руб.)\n"
-                        f"📅 Дедлайн: {client['deadline'][:10]}\n\n"
-                        f"👇 Что делаем?"
+                        f"📅 Дедлайн: {client['deadline'][:10]}"
                     )
                     kb = InlineKeyboardMarkup(inline_keyboard=[
                         [InlineKeyboardButton(text="💰 Внести оплату", callback_data=f"pay_pending_{cid}")],

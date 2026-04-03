@@ -116,7 +116,23 @@ async def cancel_state_if_needed(message: types.Message, state: FSMContext):
     current_state = await state.get_state()
     if current_state is not None:
         await state.clear()
-        await message.answer("🔄 Действие отменено. Возвращаюсь в главное меню.", reply_markup=main_keyboard())
+        await message.answer("🔄 Действие отменено.", reply_markup=main_keyboard())
+
+# УНИВЕРСАЛЬНЫЙ ПЕРЕХВАТЧИК КНОПОК МЕНЮ (должен быть ПЕРЕД всеми обработчиками состояний)
+@dp.message(lambda message: message.text in ["➕ Добавить выкуп", "📋 Список всех выкупов", "⏳ Ожидают решения", "⛔ Чёрный список (ЧС)"])
+async def handle_menu_buttons_during_state(message: types.Message, state: FSMContext):
+    """Перехватывает кнопки меню, даже если бот находится в состоянии"""
+    await cancel_state_if_needed(message, state)
+    
+    # Перенаправляем на нужный обработчик
+    if message.text == "➕ Добавить выкуп":
+        await add_purchase_start(message, state)
+    elif message.text == "📋 Список всех выкупов":
+        await list_active_purchases(message, state)
+    elif message.text == "⏳ Ожидают решения":
+        await list_pending(message, state)
+    elif message.text == "⛔ Чёрный список (ЧС)":
+        await show_blacklist(message, state)
 
 @dp.message(Command("cancel"))
 async def cancel_handler(message: types.Message, state: FSMContext):
@@ -136,7 +152,6 @@ async def start(message: types.Message, state: FSMContext):
 async def add_purchase_start(message: types.Message, state: FSMContext):
     if message.from_user.id not in ALLOWED_USERS:
         return
-    await cancel_state_if_needed(message, state)
     await message.answer("📝 Введите ФИО клиента:")
     await state.set_state(AddPurchase.fio)
 
@@ -144,7 +159,6 @@ async def add_purchase_start(message: types.Message, state: FSMContext):
 async def list_active_purchases(message: types.Message, state: FSMContext):
     if message.from_user.id not in ALLOWED_USERS:
         return
-    await cancel_state_if_needed(message, state)
     kb = active_clients_keyboard()
     if not kb.inline_keyboard:
         await message.answer("📭 Активных выкупов нет.")
@@ -155,7 +169,6 @@ async def list_active_purchases(message: types.Message, state: FSMContext):
 async def list_pending(message: types.Message, state: FSMContext):
     if message.from_user.id not in ALLOWED_USERS:
         return
-    await cancel_state_if_needed(message, state)
     kb = pending_clients_keyboard()
     if not kb.inline_keyboard:
         await message.answer("✅ Нет клиентов, ожидающих решения.")
@@ -166,7 +179,6 @@ async def list_pending(message: types.Message, state: FSMContext):
 async def show_blacklist(message: types.Message, state: FSMContext):
     if message.from_user.id not in ALLOWED_USERS:
         return
-    await cancel_state_if_needed(message, state)
     kb = blacklist_keyboard()
     if not kb.inline_keyboard:
         await message.answer("📭 ЧС пуст.")
@@ -383,6 +395,16 @@ async def add_to_blacklist(callback: types.CallbackQuery):
     
     await callback.message.edit_text(f"🚫 {bl_entry['fio']} добавлен в ЧС и удалён из активных выкупов.")
     await callback.answer()
+
+@dp.message(F.text == "⛔ Чёрный список (ЧС)")
+async def show_blacklist(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ALLOWED_USERS:
+        return
+    kb = blacklist_keyboard()
+    if not kb.inline_keyboard:
+        await message.answer("📭 ЧС пуст.")
+    else:
+        await message.answer("⛔ Клиенты в ЧС:", reply_markup=kb)
 
 @dp.callback_query(F.data.startswith("bl_"))
 async def show_blacklist_entry(callback: types.CallbackQuery):

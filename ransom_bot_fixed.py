@@ -1,7 +1,7 @@
 import json
 import os
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
@@ -480,28 +480,38 @@ async def delete_blacklist_entry(callback: types.CallbackQuery):
         await callback.answer("❌ Запись не найдена")
     await callback.answer()
 
+from datetime import datetime, timedelta, timezone
+
 async def check_deadlines():
+    # Создаём московский часовой пояс (UTC+3)
+    MOSCOW_TZ = timezone(timedelta(hours=3))
+    
     while True:
-        now = datetime.now()
-        next_run = now.replace(hour=20, minute=0, second=0, microsecond=0)
-        if now >= next_run:
+        # Берём текущее время по Москве
+        now_moscow = datetime.now(MOSCOW_TZ)
+        
+        # Следующий запуск в 20:00 по Москве
+        next_run = now_moscow.replace(hour=20, minute=0, second=0, microsecond=0)
+        if now_moscow >= next_run:
             next_run += timedelta(days=1)
         
-        wait_seconds = (next_run - now).total_seconds()
+        wait_seconds = (next_run - now_moscow).total_seconds()
         await asyncio.sleep(wait_seconds)
         
         db = load_data()
-        today = datetime.now().date()
+        # Сегодняшняя дата по Москве
+        today = now_moscow.date()
         
         for user_id in ALLOWED_USERS:
             for cid, client in db["clients"].items():
                 if client.get("in_blacklist"):
                     continue
                 
+                # Дедлайн из JSON — нужно тоже перевести в московскую дату для сравнения
                 deadline_date = datetime.fromisoformat(client["deadline"]).date()
-                notified = client.get("notified", False)
                 
-                if deadline_date == today and not notified:
+                # Сравниваем с московской датой
+                if deadline_date == today and not client.get("notified", False):
                     paid = client["paid"]
                     total = client["total_amount"]
                     remaining = total - paid

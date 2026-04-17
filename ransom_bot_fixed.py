@@ -62,18 +62,7 @@ def back_keyboard():
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
 def active_clients_keyboard():
-    data = load_data()
-    kb = []
-    today = datetime.now().date()
-    for cid, client in data["clients"].items():
-        if client.get("in_blacklist"):
-            continue
-        deadline_date = datetime.fromisoformat(client["deadline"]).date()
-        if deadline_date > today:
-            kb.append([InlineKeyboardButton(text=client["fio"], callback_data=f"active_{cid}")])
-    return InlineKeyboardMarkup(inline_keyboard=kb)
-
-def pending_clients_keyboard():
+    """Активные клиенты (дедлайн сегодня или в будущем, уведомление ещё не отправлено)"""
     data = load_data()
     kb = []
     today = datetime.now().date()
@@ -82,6 +71,22 @@ def pending_clients_keyboard():
             continue
         deadline_date = datetime.fromisoformat(client["deadline"]).date()
         notified = client.get("notified", False)
+        # Активные: дедлайн сегодня или позже, И уведомление ещё не отправлено
+        if deadline_date >= today and not notified:
+            kb.append([InlineKeyboardButton(text=client["fio"], callback_data=f"active_{cid}")])
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
+def pending_clients_keyboard():
+    """Клиенты в ожидании решения (дедлайн сегодня или в прошлом, уведомление отправлено)"""
+    data = load_data()
+    kb = []
+    today = datetime.now().date()
+    for cid, client in data["clients"].items():
+        if client.get("in_blacklist"):
+            continue
+        deadline_date = datetime.fromisoformat(client["deadline"]).date()
+        notified = client.get("notified", False)
+        # Ожидают решения: дедлайн сегодня или раньше, И уведомление отправлено
         if deadline_date <= today and notified:
             kb.append([InlineKeyboardButton(text=client["fio"], callback_data=f"pending_{cid}")])
     return InlineKeyboardMarkup(inline_keyboard=kb)

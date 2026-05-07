@@ -1,7 +1,7 @@
 import json
 import os
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
@@ -62,7 +62,6 @@ def back_keyboard():
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
 def active_clients_keyboard():
-    """Активные клиенты (дедлайн сегодня или в будущем, уведомление ещё не отправлено)"""
     data = load_data()
     kb = []
     today = datetime.now().date()
@@ -71,13 +70,11 @@ def active_clients_keyboard():
             continue
         deadline_date = datetime.fromisoformat(client["deadline"]).date()
         notified = client.get("notified", False)
-        # Активные: дедлайн сегодня или позже, И уведомление ещё не отправлено
         if deadline_date >= today and not notified:
             kb.append([InlineKeyboardButton(text=client["fio"], callback_data=f"active_{cid}")])
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
 def pending_clients_keyboard():
-    """Клиенты в ожидании решения (дедлайн сегодня или в прошлом, уведомление отправлено)"""
     data = load_data()
     kb = []
     today = datetime.now().date()
@@ -86,7 +83,6 @@ def pending_clients_keyboard():
             continue
         deadline_date = datetime.fromisoformat(client["deadline"]).date()
         notified = client.get("notified", False)
-        # Ожидают решения: дедлайн сегодня или раньше, И уведомление отправлено
         if deadline_date <= today and notified:
             kb.append([InlineKeyboardButton(text=client["fio"], callback_data=f"pending_{cid}")])
     return InlineKeyboardMarkup(inline_keyboard=kb)
@@ -97,6 +93,18 @@ def blacklist_keyboard():
     for bid, bl_entry in data["blacklist"].items():
         kb.append([InlineKeyboardButton(text=bl_entry["fio"], callback_data=f"bl_{bid}")])
     return InlineKeyboardMarkup(inline_keyboard=kb)
+
+def format_payments_history(payments):
+    """Форматирует историю платежей для вывода"""
+    if not payments:
+        return "Нет платежей"
+    result = []
+    for payment in payments:
+        # Ожидаемый формат: {"date": "2026-04-06", "amount": 5000}
+        date_str = payment.get("date", "")
+        amount = payment.get("amount", 0)
+        result.append(f"{date_str} - {amount} руб.")
+    return "\n".join(result)
 
 def client_detail_keyboard(client_id, is_pending=False):
     if is_pending:
@@ -192,6 +200,13 @@ async def add_days(message: types.Message, state: FSMContext):
         
         client_id = f"client_{int(datetime.now().timestamp())}"
         deadline = datetime.now() + timedelta(days=user_data["first_payment_days"])
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        
+        # НОВОЕ: добавляем первый платёж в историю
+        payments_history = [{
+            "date": today_str,
+            "amount": user_data["first_payment"]
+        }]
         
         new_client = {
             "fio": user_data["fio"],
@@ -205,6 +220,7 @@ async def add_days(message: types.Message, state: FSMContext):
             "deadline": deadline.isoformat(),
             "in_blacklist": False,
             "notified": False,
+            "payments_history": payments_history,  # НОВОЕ: история платежей
             "created_at": datetime.now().isoformat()
         }
         
@@ -263,13 +279,16 @@ async def show_active_client(callback: types.CallbackQuery):
     total = client["total_amount"]
     remaining = total - paid
     deadline_date = datetime.fromisoformat(client["deadline"]).date()
+    payments_text = format_payments_history(client.get("payments_history", []))
+    
     text = (
         f"👤 ФИО: {client['fio']}\n"
         f"🔢 Номер рамы: {client['frame_number']}\n"
         f"📞 Телефон: {client['phone']}\n"
         f"💰 Выкуп: {paid}/{total} руб.\n"
         f"📉 Осталось: {remaining} руб.\n"
-        f"📅 Дедлайн: {deadline_date}"
+        f"📅 Дедлайн: {deadline_date}\n\n"
+        f"📋 Внесённые оплаты:\n{payments_text}"
     )
     await callback.message.edit_text(text, reply_markup=client_detail_keyboard(client_id, is_pending=False))
     await callback.answer()
@@ -287,6 +306,8 @@ async def show_pending_client(callback: types.CallbackQuery):
     total = client["total_amount"]
     remaining = total - paid
     deadline_date = datetime.fromisoformat(client["deadline"]).date()
+    payments_text = format_payments_history(client.get("payments_history", []))
+    
     text = (
         f"⚠️ ПРОСРОЧКА!\n\n"
         f"👤 ФИО: {client['fio']}\n"
@@ -294,7 +315,8 @@ async def show_pending_client(callback: types.CallbackQuery):
         f"📞 Телефон: {client['phone']}\n"
         f"💰 Оплачено: {paid}/{total} руб.\n"
         f"📉 Осталось: {remaining} руб.\n"
-        f"📅 Дедлайн истёк: {deadline_date}"
+        f"📅 Дедлайн истёк: {deadline_date}\n\n"
+        f"📋 Внесённые оплаты:\n{payments_text}"
     )
     await callback.message.edit_text(text, reply_markup=client_detail_keyboard(client_id, is_pending=True))
     await callback.answer()
@@ -340,10 +362,24 @@ async def process_payment_days(message: types.Message, state: FSMContext):
             await state.clear()
             return
         
+        # НОВОЕ: получаем старый дедлайн
+        old_deadline = datetime.fromisoformat(client["deadline"])
+        
+        # НОВОЕ: новый дедлайн = старый дедлайн + количество дней
+        new_deadline = old_deadline + timedelta(days=days)
+        
+        # НОВОЕ: добавляем платёж в историю
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        payments_history = client.get("payments_history", [])
+        payments_history.append({
+            "date": today_str,
+            "amount": payment_amount
+        })
+        
         client["paid"] += payment_amount
-        new_deadline = datetime.now() + timedelta(days=days)
         client["deadline"] = new_deadline.isoformat()
         client["notified"] = False
+        client["payments_history"] = payments_history  # НОВОЕ: сохраняем историю
         
         if client["paid"] >= client["total_amount"]:
             fio = client["fio"]
@@ -358,7 +394,10 @@ async def process_payment_days(message: types.Message, state: FSMContext):
         
         remaining = client["total_amount"] - client["paid"]
         await message.answer(
-            f"✅ Принято {payment_amount} руб.\n💰 Осталось: {remaining} руб.\n📅 Новый дедлайн: {new_deadline.strftime('%Y-%m-%d')}",
+            f"✅ Принято {payment_amount} руб.\n"
+            f"💰 Осталось: {remaining} руб.\n"
+            f"📅 Новый дедлайн: {new_deadline.strftime('%Y-%m-%d')}\n"
+            f"(отсчитано от предыдущего дедлайна {old_deadline.strftime('%Y-%m-%d')})",
             reply_markup=main_keyboard()
         )
         await state.clear()
@@ -375,12 +414,14 @@ async def add_to_blacklist(callback: types.CallbackQuery):
         await callback.answer("❌ Клиент не найден")
         return
     
+    # НОВОЕ: сохраняем историю платежей в ЧС
     bl_entry = {
         "fio": client["fio"],
         "phone": client["phone"],
         "frame_number": client["frame_number"],
         "total_amount": client["total_amount"],
         "paid": client["paid"],
+        "payments_history": client.get("payments_history", []),  # НОВОЕ
         "removed_at": datetime.now().isoformat()
     }
     db["blacklist"][client_id] = bl_entry
@@ -400,12 +441,15 @@ async def show_blacklist_entry(callback: types.CallbackQuery):
         await callback.answer("❌ Запись не найдена")
         return
     
+    payments_text = format_payments_history(entry.get("payments_history", []))
+    
     text = (
         f"👤 ФИО: {entry['fio']}\n"
         f"📞 Телефон: {entry['phone']}\n"
         f"🔢 Рама: {entry['frame_number']}\n"
         f"💰 Успел оплатить: {entry['paid']}/{entry['total_amount']} руб.\n"
-        f"🗓 Добавлен в ЧС: {entry['removed_at'][:10]}"
+        f"🗓 Добавлен в ЧС: {entry['removed_at'][:10]}\n\n"
+        f"📋 Внесённые оплаты:\n{payments_text}"
     )
     await callback.message.edit_text(text, reply_markup=blacklist_detail_keyboard(blacklist_id))
     await callback.answer()
@@ -444,7 +488,17 @@ async def unblacklist_days(message: types.Message, state: FSMContext):
             await state.clear()
             return
         
+        # НОВОЕ: дедлайн отсчитывается от текущей даты (при возврате из ЧС как новый договор)
         deadline = datetime.now() + timedelta(days=days)
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        
+        # НОВОЕ: сохраняем старую историю платежей и добавляем новый
+        payments_history = bl_entry.get("payments_history", [])
+        payments_history.append({
+            "date": today_str,
+            "amount": amount
+        })
+        
         client = {
             "fio": bl_entry["fio"],
             "phone": bl_entry["phone"],
@@ -454,6 +508,7 @@ async def unblacklist_days(message: types.Message, state: FSMContext):
             "deadline": deadline.isoformat(),
             "in_blacklist": False,
             "notified": False,
+            "payments_history": payments_history,  # НОВОЕ
             "created_at": datetime.now().isoformat(),
             "first_payment": amount,
             "first_payment_days": days,
@@ -464,7 +519,10 @@ async def unblacklist_days(message: types.Message, state: FSMContext):
         
         remaining = bl_entry["total_amount"] - amount
         await message.answer(
-            f"✅ {bl_entry['fio']} возвращён из ЧС!\n💰 Внесено: {amount} руб.\n📉 Осталось: {remaining} руб.\n📅 Новый дедлайн: {deadline.strftime('%Y-%m-%d')}",
+            f"✅ {bl_entry['fio']} возвращён из ЧС!\n"
+            f"💰 Внесено: {amount} руб.\n"
+            f"📉 Осталось: {remaining} руб.\n"
+            f"📅 Новый дедлайн: {deadline.strftime('%Y-%m-%d')}",
             reply_markup=main_keyboard()
         )
         await state.clear()
@@ -485,38 +543,28 @@ async def delete_blacklist_entry(callback: types.CallbackQuery):
         await callback.answer("❌ Запись не найдена")
     await callback.answer()
 
-from datetime import datetime, timedelta, timezone
-
 async def check_deadlines():
-    # Создаём московский часовой пояс (UTC+3)
-    MOSCOW_TZ = timezone(timedelta(hours=3))
-    
     while True:
-        # Берём текущее время по Москве
-        now_moscow = datetime.now(MOSCOW_TZ)
-        
-        # Следующий запуск в 20:00 по Москве
-        next_run = now_moscow.replace(hour=20, minute=0, second=0, microsecond=0)
-        if now_moscow >= next_run:
+        now = datetime.now()
+        next_run = now.replace(hour=20, minute=0, second=0, microsecond=0)
+        if now >= next_run:
             next_run += timedelta(days=1)
         
-        wait_seconds = (next_run - now_moscow).total_seconds()
+        wait_seconds = (next_run - now).total_seconds()
         await asyncio.sleep(wait_seconds)
         
         db = load_data()
-        # Сегодняшняя дата по Москве
-        today = now_moscow.date()
+        today = datetime.now().date()
         
         for user_id in ALLOWED_USERS:
             for cid, client in db["clients"].items():
                 if client.get("in_blacklist"):
                     continue
                 
-                # Дедлайн из JSON — нужно тоже перевести в московскую дату для сравнения
                 deadline_date = datetime.fromisoformat(client["deadline"]).date()
+                notified = client.get("notified", False)
                 
-                # Сравниваем с московской датой
-                if deadline_date == today and not client.get("notified", False):
+                if deadline_date == today and not notified:
                     paid = client["paid"]
                     total = client["total_amount"]
                     remaining = total - paid

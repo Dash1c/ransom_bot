@@ -2,6 +2,7 @@ import json
 import os
 import asyncio
 from datetime import datetime, timedelta
+from dotenv import load_dotenv  # НОВОЕ
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
@@ -9,7 +10,13 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
-TOKEN = "8658698050:AAGL2QE7LS_RfEHM1ZwvLOoQ4Xg_Xxjt_Zk"
+load_dotenv()
+
+TOKEN = os.getenv('BOT_TOKEN')
+
+if not TOKEN:
+    raise ValueError("BOT_TOKEN не найден в переменных окружения!")
+
 ALLOWED_USERS = [651953211, 1901955703, 1793833215]
 
 bot = Bot(token=TOKEN)
